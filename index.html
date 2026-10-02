@@ -898,7 +898,12 @@ function draw(img, L, M, mw, mh, R) {
     ctx.beginPath(); ctx.moveTo(L[a].x * k, L[a].y * k); ctx.lineTo(L[b].x * k, L[b].y * k); ctx.stroke();
   }
   ctx.strokeStyle = '#d4372c'; ctx.lineWidth = 2.5;
-  for (const sg of Object.values(R.segs)) if (sg) { ctx.beginPath(); ctx.moveTo(sg[0] * k, sg[2] * k); ctx.lineTo(sg[1] * k, sg[2] * k); ctx.stroke(); }
+  for (const [key, sg] of Object.entries(R.segs)) {
+    if (key === 'shoulder' && method === 'new') {      // 새 방식: 실제로 재는 값(어깨 관절 사이 거리)과 같은 선을, 구글 관절 선 맨 윗줄 그대로 따라 그림
+      ctx.beginPath(); ctx.moveTo(L[11].x * k, L[11].y * k); ctx.lineTo(L[12].x * k, L[12].y * k); ctx.stroke(); continue;
+    }
+    if (sg) { ctx.beginPath(); ctx.moveTo(sg[0] * k, sg[2] * k); ctx.lineTo(sg[1] * k, sg[2] * k); ctx.stroke(); }
+  }
 }
 
 function showRows(R) {
@@ -933,7 +938,7 @@ async function analyze(file) {
     const R = measure(L, M, mw, mh, st.sex, h, w, $('optShoe').checked ? 25 : 0, 10, B.COEF);
     let Fm = null; try { Fm = mannequinFeatures(st.sex, h, w, st.bust, B.COEF); } catch (e) { Fm = null; }
     R.ctx = { Fm, sex: st.sex, COEF: B.COEF, h, w }; R.rows = METHODS[method].rows(R, R.ctx);
-    last = R; draw(img, L, M, mw, mh, R); showRows(R);
+    R.dr = { img, L, M, mw, mh }; last = R; draw(img, L, M, mw, mh, R); showRows(R);
     $('refImg').src = img.src; $('refBox').hidden = false;
     $('refNote').textContent = `${file.name} · ${st.sex === 'F' ? '여성' : '남성'} ${h}cm / ${w}kg 기준으로 분석`;
     status(`분석 완료 — ${st.sex === 'F' ? '여성' : '남성'} 키 ${h}cm · 체중 ${w}kg 기준. 사진 1px ≈ ${R.s.toFixed(2)}mm.` + (low.length ? ' 일부 관절이 잘 안 보여서 정확도가 낮을 수 있어요.' : ''));
@@ -947,7 +952,7 @@ function setMethodUI() {
   if (last) $('photoNote').textContent = METHODS[method].note + ' 빨간 선이 잰 위치예요. 실루엣 테스트(BodyM)에서는 새 방식의 어깨 정확도가 가장 높았고, 실제 컬러 사진은 아직 검증 전이에요.';
 }
 $('photoMethod').innerHTML = Object.entries(METHODS).map(([k, v]) => `<button type="button" data-m="${k}" aria-pressed="${k === method}">${v.name}</button>`).join('');
-$('photoMethod').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; method = b.dataset.m; setMethodUI(); if (last) { last.rows = METHODS[method].rows(last, last.ctx); showRows(last); } });
+$('photoMethod').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; method = b.dataset.m; setMethodUI(); if (last) { last.rows = METHODS[method].rows(last, last.ctx); const d = last.dr; draw(d.img, d.L, d.M, d.mw, d.mh, last); showRows(last); } });
 setMethodUI();
 $('photoFile').addEventListener('change', e => { const f = e.target.files[0]; if (f) analyze(f); });
 $('optTight').addEventListener('change', () => { if (last) showRows(last); });
