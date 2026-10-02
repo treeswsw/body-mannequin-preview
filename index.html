@@ -441,6 +441,23 @@ label.btn { display: inline-block; }
       return lerp(vs[lo], vs[hi], (y - ys[lo]) / (ys[hi] - ys[lo]));
     };
   }
+  function smoothKnots(xs, vals, sigma) {        // 마디 값은 그대로 통과, 마디 사이만 부드럽게
+    const base = interp(xs, vals, 'clamp'), lo = xs[0], hi = xs[xs.length - 1], st = 10, n = Math.round((hi - lo) / st) + 1;
+    const raw = Array.from({ length: n }, (_, i) => base(lo + i * st)), r = Math.ceil(sigma * 3 / st), ker = [];
+    for (let j = -r; j <= r; j++) ker.push(Math.exp(-0.5 * (j * st / sigma) ** 2));
+    const bl = raw.map((_, i) => { let a = 0, w = 0; for (let j = -r; j <= r; j++) { const q = Math.min(n - 1, Math.max(0, i + j)); a += raw[q] * ker[j + r]; w += ker[j + r]; } return a / w; });
+    const at = y => { const t = Math.min(n - 1, Math.max(0, (y - lo) / st)), i = Math.min(n - 2, Math.floor(t)); return lerp(bl[i], bl[i + 1], t - i); };
+    const corr = interp(xs, xs.map((x, i) => vals[i] - at(x)), 'clamp');
+    return y => at(Math.min(hi, Math.max(lo, y))) + corr(y);
+  }
+  function taubin(pts, iter = 4) {               // 크기를 줄이지 않는 윤곽 다듬기 (줄였다 늘리는 2단계 평활)
+    const n = pts.length; let a = pts.map(p => p.slice());
+    for (let it = 0; it < iter; it++) for (const lam of [0.5, -0.53]) {
+      const b = a.map((p, i) => { const q = a[(i + n - 1) % n], r = a[(i + 1) % n]; return [p[0] + lam * ((q[0] + r[0]) / 2 - p[0]), p[1] + lam * ((q[1] + r[1]) / 2 - p[1])]; });
+      a = b;
+    }
+    return a;
+  }
   const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   const polyPath = pts => 'M' + pts.map(p => `${f(p[0])},${f(Y(p[1]))}`).join('L') + 'Z';
   function makeTmpl(TF, SEX) {
@@ -460,8 +477,8 @@ label.btn { display: inline-block; }
       const rs = names.map(n => tp(k, n).halfWidth / tp(k0, n).halfWidth), ds = names.map(n => tp(k, n).halfDepth / tp(k0, n).halfDepth);
       const hr = k.head.halfWidth / k0.head.halfWidth, hd = k.head.halfDepth / k0.head.halfDepth;
       const ty = [k0.crotchY, ...names.map(n => tp(k0, n).y), k0.head.centerY, k0.H];
-      const rT = interp(ty, [rs[0], ...rs, hr, hr], 'clamp');
-      const rD = interp(ty, [ds[0], ...ds, hd, hd], 'clamp');
+      const rT = smoothKnots(ty, [rs[0], ...rs, hr, hr], 55);
+      const rD = smoothKnots(ty, [ds[0], ...ds, hd, hd], 55);
       // 다리: 아래→위 (발목, 종아리, 무릎, 샅)
       const ly = [k0.leg[3].y, k0.leg[2].y, k0.leg[1].y, k0.leg[0].y];
       const rL = interp(ly, [3, 2, 1, 0].map(i => k.leg[i].halfWidth / k0.leg[i].halfWidth), 'clamp');
@@ -473,14 +490,17 @@ label.btn { display: inline-block; }
       const fArm = ((TF.armTop - TF.armTip) * (k.armLen / k0.armLen)) / (Ymap(TF.armTop) - Ymap(TF.armTip));
       const bk = tp(k, 'bust'), b0 = tp(k0, 'bust');
       const bust = bk && b0 && TF.bustP ? { g: bk.grp, g0: b0.grp, H0: k0.H } : null;
-      return { Ymap, rT, rD, rL, rC, rA, dSh, fArm, bust };
+      const hs = Math.max(0.9, Math.min(1.12, k.H / k0.H));            // 손 크기는 키 비율만 따름
+      const wristY = TF.armTip + 190, LA = TF.armTop - wristY, Lnew = (TF.armTop - TF.armTip) * (k.armLen / k0.armLen);
+      const fA = Math.max(0.3, (Lnew - 190 * hs) / LA);                  // 팔 길이 변화는 손목 위(위팔·아래팔)가 흡수
+      return { Ymap, rT, rD, rL, rC, rA, dSh, fArm, fA, hs, wristY, LA, bust };
     }
     function warpFront(W, x, y) {
       const ax = Math.abs(x), sg = x < 0 ? -1 : 1;
       const torsoX = x * W.rT(y);
       const lc = lC(y), lw = lW(y);
       const legX = lc === null ? torsoX : sg * (lc * W.rC(y) + (ax - lc) * W.rL(y));
-      const wt = sstep(TF.crotch - 110, TF.crotch + 40, y);
+      const wt = sstep(TF.crotch - 190, TF.crotch + 60, y);
       const bodyX = lerp(legX, torsoX, lc === null ? 1 : wt);
       let wa = 0, armX = bodyX;
       const ac = aC(y), aw = aW(y);
@@ -489,13 +509,13 @@ label.btn { display: inline-block; }
         const inner = ac - aw, b = te !== null && y > TF.crotch ? (te + inner) / 2 : lc !== null && lw !== null ? (lc + lw + inner) / 2 : inner - 10;
         wa = sstep(b - 6, b + 6, ax) * (1 - sstep(TF.armTop - 40, TF.armTop + 40, y)); // 겨드랑이 위로 갈수록 몸통 변형으로 서서히 전환
         const s = Math.max(0, Math.min(1, (TF.armTop - y) / (TF.armTop - TF.armTip)));
-        const ra = W.rA(s);
+        const sW = (TF.armTop - W.wristY) / (TF.armTop - TF.armTip), ra0 = W.rA(Math.min(s, sW)), ra = lerp(ra0, 1 + (W.hs - 1) + (ra0 - 1) * 0.2, sstep(sW - 0.05, sW + 0.07, s));
         const dEdge = te !== null ? te * (W.rT(y) - 1) : 0;
         const push = Math.max(W.dSh, dEdge) + (ra - 1) * aw;
         armX = sg * (ac + push + (ax - ac) * ra);
       }
       const yt = W.Ymap(y), top = W.Ymap(TF.armTop);
-      const ya = top - (top - yt) * W.fArm;
+      const dT = TF.armTop - y, ya = top - (dT <= W.LA ? dT * W.fA : W.LA * W.fA + (dT - W.LA) * W.hs);
       return [lerp(bodyX, armX, wa), lerp(yt, ya, wa)];
     }
     function warpSide(W, z, y) {
@@ -509,16 +529,16 @@ label.btn { display: inline-block; }
         torsoZ += delta * sstep(tc, tc + 70, z);
       }
       const legZ = lz === null ? torsoZ : lz + (z - lz) * W.rL(y);
-      const wt = sstep(TF.crotch - 110, TF.crotch + 40, y);
+      const wt = sstep(TF.crotch - 190, TF.crotch + 60, y);
       return [lerp(legZ, torsoZ, lz === null ? 1 : wt) - zMid, W.Ymap(y)];
     }
     function tmplFront(k, cls) {
       const W = warpFns(k);
-      return `<g class="${cls}"><path class="b" d="${polyPath(TF.front.map(p => warpFront(W, p[0], p[1])))}"/></g>`;
+      return `<g class="${cls}"><path class="b" d="${polyPath(taubin(TF.front.map(p => warpFront(W, p[0], p[1]))))}"/></g>`;
     }
     function tmplSide(k, cls) {
       const W = warpFns(k);
-      return `<g class="${cls}"><path class="b" d="${polyPath(TF.side.map(p => warpSide(W, p[0], p[1])))}"/></g>`;
+      return `<g class="${cls}"><path class="b" d="${polyPath(taubin(TF.side.map(p => warpSide(W, p[0], p[1]))))}"/></g>`;
     }
     return { front: tmplFront, side: tmplSide };
   }
