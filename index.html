@@ -801,7 +801,7 @@ function measure(L, M, mw, mh, sex, h, w, shoe, hair, COEF) {
 /* 마네킹 윤곽을 사진과 같은 방식(관절 검출 + 같은 측정)으로 재서 비교 기준으로 쓴다.
    슬라이더 = (사진에서 잰 값 − 마네킹에서 같은 방식으로 잰 값) ÷ 슬라이더 1칸당 변화량(mm)
    → 정의·자세·검출 편향이 양쪽에서 같이 상쇄된다. 1칸당 변화량은 BodyM 397명 테스트에서 구한 중앙값. */
-const SLOPE = { F: { shoulder: 6.2, waist: 11.2, hip: 12.1, legLength: 6.7 }, M: { shoulder: 8.0, waist: 11.8, hip: 10.4, legLength: 7.9 } };
+const SLOPE = { F: { shoulder: 6.2, waist: 11.3, hip: 12.3, legLength: 9.3 }, M: { shoulder: 8.0, waist: 11.9, hip: 11.4, legLength: 7.1 } };
 function mannequinMeasure(sex, h, w, bust, COEF, sliders) {     // 마네킹 윤곽을 단색 실루엣으로 그려 사진과 같은 방식(관절 검출 + 같은 측정)으로 잰다
   const B = window.__BODY, pts = B.mannequinFront(sex, h, w, bust, sliders || { shoulder: 0, waist: 0, hip: 0, legLength: 0, armLength: 0 });
   const cv = document.createElement('canvas'); cv.width = 720; cv.height = 960;
@@ -857,7 +857,7 @@ $('jointOn').addEventListener('change', () => {
   if ($('jointOn').checked) { $('jointNote').hidden = false; $('jointNote').textContent = pose ? '관절을 찾는 중…' : '분석 모델을 불러오는 중이에요… (처음 한 번, 약 26MB)'; showJoints(); }
   else { ++jointTok; clearTimeout(jointTimer); $('jointNote').hidden = true; const g = $('fig').querySelector('#jointG'); if (g) g.remove(); }
 });
-function buildRowsOld(R, Fm, sex, COEF, h, w) {            // 기존 방식: 사진 값을 한국 평균 예측값과 비교
+function buildRowsOld(R, Fm, sex, COEF, h, w) {            // 초기 버전: 마네킹은 재지 않고 사진 값을 한국 평균 예측값과 비교
   const it = COEF[sex].items, P = n => it[n].a + it[n].b_height * h + it[n].c_weight * w, SD = n => it[n].rmse, f = R.f;
   return [
     { key: 'legLength', label: '다리 길이 (무릎 높이)', m: f.knee, p: P('무릎높이'), sd: SD('샅높이') * P('무릎높이') / P('샅높이'), def: true, note: '관절 위치 기준' },
@@ -867,10 +867,10 @@ function buildRowsOld(R, Fm, sex, COEF, h, w) {            // 기존 방식: 사
     { key: 'armLength', label: '팔 길이', m: f.arm, p: P('팔길이'), sd: SD('팔길이'), def: false, note: '어깨 관절점 기준이라 짧게 나와요 (보정 전)' }
   ];
 }
-/* 맞추기 방식 목록: 앞으로 새 방식을 만들면 여기에 한 항목만 추가하면 선택 버튼이 생긴다 */
+/* 맞추기 방식 목록: 앞으로 새 버전을 만들면 여기에 한 항목만 추가하면 선택 버튼이 생긴다 */
 const METHODS = {
-  old: { name: '기존 방식', desc: '사진에서 잰 값과 한국 평균 예측값의 차이로 슬라이더를 정해요. 어깨·허리·엉덩이·다리 길이 4개를 쓰고, 정의가 달라 어깨가 크게 나올 수 있어요.', note: '슬라이더 값 = (사진에서 잰 값 − 키·체중으로 예측한 값) ÷ 같은 키·체중 사람들의 편차. 체크된 항목만 적용돼요.', rows: (R, ctx) => buildRowsOld(R, ctx.Fm, ctx.sex, ctx.COEF, ctx.h, ctx.w) },
-  new: { name: '새 방식 (교정)', desc: '마네킹도 사진과 같은 방식으로 재서 차이만큼 슬라이더를 정해요. 어깨(관절 간격)와 허리를 쓰고 엉덩이·다리·팔은 기본 해제예요.', note: '슬라이더 값 = (사진에서 잰 값 − 마네킹을 같은 방식으로 잰 값) ÷ 슬라이더 1칸당 변화량. 체크된 항목만 적용돼요.', rows: (R, ctx) => buildRows(R, ctx.Fm, ctx.sex, ctx.COEF, ctx.h, ctx.w) }
+  old: { name: '초기 버전', desc: '마네킹에는 구글 분석을 하지 않고, 사진에서 잰 값과 한국 평균 예측값의 차이로 슬라이더를 정해요. 어깨·허리·엉덩이·다리 길이 4개를 써요.', note: '슬라이더 값 = (사진에서 잰 값 − 키·체중으로 예측한 값) ÷ 같은 키·체중 사람들의 편차. 체크된 항목만 적용돼요.', rows: (R, ctx) => buildRowsOld(R, ctx.Fm, ctx.sex, ctx.COEF, ctx.h, ctx.w) },
+  new: { name: '마네킹 역보정', desc: '마네킹도 사진과 같은 방식(구글 관절 인식)으로 재서, 그 차이만큼 슬라이더를 정해요. 어깨(관절 간격)와 허리를 쓰고 엉덩이·다리·팔은 기본 해제예요.', note: '슬라이더 값 = (사진에서 잰 값 − 마네킹을 같은 방식으로 잰 값) ÷ 슬라이더 1칸당 변화량. 체크된 항목만 적용돼요.', rows: (R, ctx) => buildRows(R, ctx.Fm, ctx.sex, ctx.COEF, ctx.h, ctx.w) }
 };
 let method = 'new';
 function buildRows(R, Fm, sex, COEF, h, w) {
@@ -899,7 +899,7 @@ function draw(img, L, M, mw, mh, R) {
   }
   ctx.strokeStyle = '#d4372c'; ctx.lineWidth = 2.5;
   for (const [key, sg] of Object.entries(R.segs)) {
-    if (key === 'shoulder' && method === 'new') {      // 새 방식: 실제로 재는 값(어깨 관절 사이 거리)과 같은 선을, 구글 관절 선 맨 윗줄 그대로 따라 그림
+    if (key === 'shoulder' && method === 'new') {      // 마네킹 역보정: 실제로 재는 값(어깨 관절 사이 거리)과 같은 선을, 구글 관절 선 맨 윗줄 그대로 따라 그림
       ctx.beginPath(); ctx.moveTo(L[11].x * k, L[11].y * k); ctx.lineTo(L[12].x * k, L[12].y * k); ctx.stroke(); continue;
     }
     if (sg) { ctx.beginPath(); ctx.moveTo(sg[0] * k, sg[2] * k); ctx.lineTo(sg[1] * k, sg[2] * k); ctx.stroke(); }
@@ -949,7 +949,7 @@ async function analyze(file) {
 function setMethodUI() {
   document.querySelectorAll('#photoMethod button').forEach(b => b.setAttribute('aria-pressed', b.dataset.m === method));
   $('methodDesc').textContent = METHODS[method].desc;
-  if (last) $('photoNote').textContent = METHODS[method].note + ' 빨간 선이 잰 위치예요. 실루엣 테스트(BodyM)에서는 새 방식의 어깨 정확도가 가장 높았고, 실제 컬러 사진은 아직 검증 전이에요.';
+  if (last) $('photoNote').textContent = METHODS[method].note + ' 빨간 선이 잰 위치예요. 실루엣 테스트(BodyM)에서는 마네킹 역보정의 어깨 정확도가 가장 높았고, 실제 컬러 사진은 아직 검증 전이에요.';
 }
 $('photoMethod').innerHTML = Object.entries(METHODS).map(([k, v]) => `<button type="button" data-m="${k}" aria-pressed="${k === method}">${v.name}</button>`).join('');
 $('photoMethod').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; method = b.dataset.m; setMethodUI(); if (last) { last.rows = METHODS[method].rows(last, last.ctx); const d = last.dr; draw(d.img, d.L, d.M, d.mw, d.mh, last); showRows(last); } });
