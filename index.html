@@ -20,6 +20,8 @@
   --grid: #dfe6e3;
   --body: #7f978e;
   --body-arm: #6c847b;
+  --body-light: #a9bcb4;
+  --body-dark: #5b7268;
   --ghost: #c9a24a;
   --accent: #b5761a;
   --warn-bg: #fbefd9;
@@ -30,11 +32,11 @@
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #111614; --panel: #18201d; --ink: #e3ebe7; --muted: #9aaba4; --line: #2b3632; --grid: #1f2926;
-  --body: #6d8a7f; --body-arm: #5b776d; --ghost: #d8ad4f; --accent: #e3a53e;
+  --body: #6d8a7f; --body-arm: #5b776d; --body-light: #8eaa9f; --body-dark: #4a6258; --ghost: #d8ad4f; --accent: #e3a53e;
   --warn-bg: #3a2c12; --warn-ink: #f2cf8a; --good: #6cc996; --mid: #e3b54f; --low: #f08a7f; color-scheme: dark; } }
 :root[data-theme="dark"] {
   --bg: #111614; --panel: #18201d; --ink: #e3ebe7; --muted: #9aaba4; --line: #2b3632; --grid: #1f2926;
-  --body: #6d8a7f; --body-arm: #5b776d; --ghost: #d8ad4f; --accent: #e3a53e;
+  --body: #6d8a7f; --body-arm: #5b776d; --body-light: #8eaa9f; --body-dark: #4a6258; --ghost: #d8ad4f; --accent: #e3a53e;
   --warn-bg: #3a2c12; --warn-ink: #f2cf8a; --good: #6cc996; --mid: #e3b54f; --low: #f08a7f; color-scheme: dark; }
 
 body { background: var(--bg); color: var(--ink); font-family: var(--f-ui); font-size: 14px; line-height: 1.5; }
@@ -90,7 +92,7 @@ th.n { text-align: right; }
 .chip { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
 .q-높음 { color: var(--good); } .q-보통 { color: var(--mid); } .q-낮음 { color: var(--low); } .q-선택 { color: var(--accent); }
 .note { font-size: 12px; color: var(--muted); margin: 0; }
-@media (prefers-reduced-motion: no-preference) { #fig path, #side path, #fig ellipse, #side ellipse { transition: d 0.12s linear; } }
+@media (prefers-reduced-motion: no-preference) { #fig path, #side path { transition: d 0.12s linear; } }
 </style>
 
 </head>
@@ -264,45 +266,118 @@ th.n { text-align: right; }
     }
     return d;
   }
-  function torsoPath(t, key, bottomY, bottomHW) {
-    const right = t.map(p => [p[key], Y(p.y)]).concat([[bottomHW, Y(bottomY)]]);
-    const left = right.map(p => [-p[0], p[1]]).reverse();
-    return `M${P(right[0])}${smooth(right)} L${P(left[0])}${smooth(left)} Z`;
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const S = p => [p[0], Y(p[1])];
+  function closedSmooth(pts) {
+    const q = pts.map(S), n = q.length; let d = `M${P(q[0])}`;
+    for (let i = 0; i < n; i++) {
+      const p0 = q[(i - 1 + n) % n], p1 = q[i], p2 = q[(i + 1) % n], p3 = q[(i + 2) % n];
+      d += ` C${P([p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6])} ${P([p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6])} ${P(p2)}`;
+    }
+    return d + ' Z';
   }
-  function limbPath(pts, sign, roundTop) {
-    const R = pts.map(p => [sign * p.x + p.halfWidth, Y(p.y)]);
-    const L = pts.map(p => [sign * p.x - p.halfWidth, Y(p.y)]).reverse();
-    const a = pts[0].halfWidth, b = pts[pts.length - 1].halfWidth;
-    let d = `M${P(L[L.length - 1])}`;
-    d += roundTop ? ` A${f(a)} ${f(a)} 0 0 1 ${P(R[0])}` : ` L${P(R[0])}`;
-    d += smooth(R);
-    d += ` A${f(b)} ${f(b)} 0 0 1 ${P(L[0])}`;
-    d += smooth(L) + ' Z';
-    return d;
+  const chain = pts => smooth(pts.map(S));        // 현재 점 = pts[0] 인 상태에서 이어 그림
+  const mirror = pts => pts.map(p => [-p[0], p[1]]).reverse();
+  const T = (k, n) => k.torso.find(p => p.name === n);
+
+  /* 정면: 몸(목~발) 하나의 윤곽 + 팔 2개 + 머리 */
+  function frontGeom(k) {
+    const nt = T(k, 'neckTop'), nb = T(k, 'neckBase'), sh = T(k, 'shoulder'), ap = T(k, 'armpit'),
+      bu = T(k, 'bust'), wa = T(k, 'waist'), na = T(k, 'navel'), hp = T(k, 'hip');
+    const nw = nt.halfWidth, headBottom = k.head.centerY - k.head.halfHeight;
+    const neckTopY = headBottom + k.head.halfHeight * 0.45;
+    const [cr, kn, ca, an] = k.leg, legX = cr.x;
+    const xk = Math.max(legX * 0.88, kn.halfWidth + 4), xc = Math.max(legX * 0.86, ca.halfWidth + 4), xa = Math.max(legX * 0.84, an.halfWidth + 4);
+    const mY = lerp(cr.y, kn.y, 0.45), xm = lerp(legX, xk, 0.45), mHW = lerp(cr.halfWidth, kn.halfWidth, 0.45) * 1.03;
+    const outer = [
+      [nw * 0.9, neckTopY], [nw, nb.y],
+      [lerp(nw, sh.halfWidth, 0.5), nb.y - (nb.y - sh.y) * 0.62],      // 승모근 경사
+      [sh.halfWidth * 0.96, sh.y - 6],
+      [lerp(sh.halfWidth, ap.halfWidth, 0.55), lerp(sh.y, ap.y, 0.55)],
+      [ap.halfWidth, ap.y]];
+    if (bu) outer.push([bu.halfWidth * 1.01, bu.y], [lerp(bu.halfWidth, wa.halfWidth, 0.5), lerp(bu.y, wa.y, 0.38)]);
+    else outer.push([lerp(ap.halfWidth, wa.halfWidth, 0.3), lerp(ap.y, wa.y, 0.35)]);
+    outer.push([wa.halfWidth, wa.y], [na.halfWidth, na.y],
+      [lerp(na.halfWidth, hp.halfWidth, 0.82), lerp(na.y, hp.y, 0.5)],
+      [hp.halfWidth, hp.y], [hp.halfWidth * 0.985, lerp(hp.y, cr.y, 0.7)],
+      [xm + mHW * 0.97, mY],
+      [xk + kn.halfWidth * 0.98, kn.y + kn.halfWidth * 0.9],
+      [xk + kn.halfWidth * 0.97, kn.y - 12],
+      [xc + ca.halfWidth * 1.03, ca.y + 28],                           // 종아리 바깥(조금 높게)
+      [lerp(xc, xa, 0.55) + lerp(ca.halfWidth, an.halfWidth, 0.6), lerp(ca.y, an.y, 0.55)],
+      [xa + an.halfWidth, an.y]);
+    const fw = k.foot.width / 2;
+    const foot = [[xa + an.halfWidth, an.y], [xa + an.halfWidth * 1.15, an.y * 0.45], [xa + fw * 0.98, 20], [xa + fw * 0.6, 0],
+      [xa - fw * 0.7, 0], [xa - fw * 0.95, 22], [xa - an.halfWidth * 1.1, an.y * 0.5], [xa - an.halfWidth, an.y]];
+    const inner = [[xa - an.halfWidth, an.y],
+      [lerp(xc, xa, 0.5) - lerp(ca.halfWidth, an.halfWidth, 0.5) * 0.97, lerp(ca.y, an.y, 0.45)],
+      [xc - ca.halfWidth, ca.y - 8],                                     // 종아리 안쪽(조금 낮게)
+      [xk - kn.halfWidth * 0.93, kn.y - 14],
+      [xk - kn.halfWidth * 0.9, kn.y + kn.halfWidth * 1.0],
+      [xm - mHW * 0.93, mY],
+      [Math.max(4, legX - cr.halfWidth) + 3, cr.y - 30], [3, cr.y]];
+    let body = `M${P(S(outer[0]))}` + chain(outer) + chain(foot) + chain(inner);
+    const L = [mirror(inner), mirror(foot), mirror(outer)];
+    body += ` L${P(S(L[0][0]))}` + L.map(chain).join('') + ' Z';
+
+    const A = k.arm, [s, , e, w, t] = A;
+    const up = s.y - e.y;
+    const xAt = y => { for (let i = 0; i < A.length - 1; i++) if (y <= A[i].y && y >= A[i + 1].y) return lerp(A[i].x, A[i + 1].x, (A[i].y - y) / (A[i].y - A[i + 1].y)); return y > s.y ? s.x : t.x; };
+    const at = (y, dx) => [xAt(y) + dx, y];
+    const hy = lerp(w.y, t.y, 0.42), fy = lerp(e.y, w.y, 0.22);
+    const arm = [
+      [s.x - s.halfWidth * 0.25, s.y + s.halfWidth * 0.12], [s.x + s.halfWidth * 0.72, s.y - s.halfWidth * 0.05],
+      at(s.y - up * 0.2, s.halfWidth * 1.06), at(s.y - up * 0.55, s.halfWidth * 0.9),
+      at(e.y + 8, e.halfWidth * 1.0), at(fy, e.halfWidth * 1.12), at(lerp(e.y, w.y, 0.7), lerp(e.halfWidth, w.halfWidth, 0.72)),
+      at(w.y, w.halfWidth), at(hy, t.halfWidth * 1.12), at(t.y + 14, t.halfWidth * 0.55), at(t.y, 0), at(t.y + 18, -t.halfWidth * 0.62),
+      at(lerp(w.y, t.y, 0.5), -t.halfWidth * 1.15), at(w.y, -w.halfWidth), at(lerp(e.y, w.y, 0.62), -lerp(e.halfWidth, w.halfWidth, 0.6)),
+      at(fy, -e.halfWidth * 1.04), at(e.y + 4, -e.halfWidth * 0.93), at(s.y - up * 0.55, -s.halfWidth * 0.84),
+      [s.x - s.halfWidth * 0.9, s.y - up * 0.22]];
+    const arms = [closedSmooth(arm), closedSmooth(arm.map(p => [-p[0], p[1]]))];
+
+    const { centerY: cy, halfHeight: hh, halfWidth: hw } = k.head;
+    const half = [[hw * 0.68, cy + hh * 0.86], [hw * 0.97, cy + hh * 0.4], [hw, cy + hh * 0.02], [hw * 0.92, cy - hh * 0.32],
+      [hw * 0.72, cy - hh * 0.68], [hw * 0.36, cy - hh * 0.94]];
+    const head = closedSmooth([[0, cy + hh], ...half, [0, cy - hh], ...mirror(half)]);
+    return { body, arms, head };
+  }
+
+  /* 측면: 앞뒤 굴곡(가슴·배·엉덩이·등·종아리) 반영 */
+  function sideGeom(k) {
+    const nt = T(k, 'neckTop'), nb = T(k, 'neckBase'), sh = T(k, 'shoulder'), ap = T(k, 'armpit'),
+      bu = T(k, 'bust'), wa = T(k, 'waist'), na = T(k, 'navel'), hp = T(k, 'hip');
+    const headBottom = k.head.centerY - k.head.halfHeight, neckTopY = headBottom + k.head.halfHeight * 0.45;
+    const [cr, kn, ca, an] = k.leg;
+    // [높이, 앞쪽 x, 뒤쪽 x]
+    const rows = [[neckTopY, 18 + nt.halfDepth * 0.95, -nt.halfDepth * 0.85], [nb.y, 22 + nb.halfDepth, -nb.halfDepth * 0.95],
+      [sh.y, sh.halfDepth * 0.95 + 8, -sh.halfDepth * 1.05], [ap.y, ap.halfDepth + 6, -ap.halfDepth * 1.02]];
+    if (bu) rows.push([lerp(ap.y, bu.y, 0.55), lerp(ap.halfDepth + 6, bu.halfDepth + 8, 0.7), -ap.halfDepth * 1.0], [bu.y - 12, bu.halfDepth + 10, -ap.halfDepth * 0.96], [lerp(bu.y, wa.y, 0.38), lerp(bu.halfDepth, wa.halfDepth, 0.6) + 6, -lerp(ap.halfDepth, wa.halfDepth, 0.5)]);
+    else rows.push([lerp(ap.y, wa.y, 0.3), ap.halfDepth + 8, -ap.halfDepth * 0.95]);
+    rows.push([wa.y, wa.halfDepth + 6, -wa.halfDepth * 0.88], [na.y, na.halfDepth + 12, -na.halfDepth * 0.92],
+      [lerp(na.y, hp.y, 0.5), lerp(na.halfDepth, hp.halfDepth, 0.5) + 6, -lerp(na.halfDepth, hp.halfDepth, 0.7) * 1.05],
+      [hp.y, hp.halfDepth * 0.8, -hp.halfDepth * 1.12], [lerp(hp.y, cr.y, 0.6), hp.halfDepth * 0.78, -hp.halfDepth * 1.04],
+      [cr.y - 25, cr.halfWidth * 1.0 + 8, -lerp(hp.halfDepth * 0.95, cr.halfWidth * 0.95, 0.6)],
+      [lerp(cr.y, kn.y, 0.45), lerp(cr.halfWidth, kn.halfWidth, 0.45) + 14, -lerp(cr.halfWidth, kn.halfWidth, 0.45) * 0.9],
+      [kn.y + 10, kn.halfWidth + 6, -kn.halfWidth * 0.9], [kn.y - 30, kn.halfWidth * 0.9, -kn.halfWidth * 1.05],
+      [ca.y, ca.halfWidth * 0.75, -ca.halfWidth * 1.3], [lerp(ca.y, an.y, 0.55), lerp(ca.halfWidth, an.halfWidth, 0.6) * 0.8, -lerp(ca.halfWidth, an.halfWidth, 0.55) * 1.05],
+      [an.y, an.halfWidth * 0.9, -an.halfWidth * 1.0]);
+    const front = rows.map(r => [r[1], r[0]]), back = rows.map(r => [r[2], r[0]]).reverse();
+    const fl = k.foot.length, aF = front[front.length - 1], aB = back[0];
+    const foot = [aF, [aF[0] + fl * 0.22, an.y * 0.55], [fl * 0.62, 22], [fl * 0.68, 4], [fl * 0.6, 0], [-fl * 0.28, 0], [-fl * 0.33, 25], [aB[0] - 6, an.y * 0.5], aB];
+    let body = `M${P(S(front[0]))}` + chain(front) + chain(foot) + chain(back) + ' Z';
+    const { centerY: cy, halfHeight: hh, halfDepth: hd } = k.head;
+    const head = closedSmooth([[hd * 0.1, cy + hh], [hd * 0.6, cy + hh * 0.86], [hd * 0.92, cy + hh * 0.4], [hd * 0.98, cy + hh * 0.05],
+      [hd * 1.06, cy - hh * 0.22], [hd * 0.95, cy - hh * 0.42], [hd * 0.98, cy - hh * 0.6], [hd * 0.82, cy - hh * 0.92], [hd * 0.5, cy - hh],
+      [hd * 0.05, cy - hh * 0.82], [-hd * 0.45, cy - hh * 0.62], [-hd * 0.82, cy - hh * 0.3], [-hd * 1.0, cy + hh * 0.15], [-hd * 0.78, cy + hh * 0.7], [-hd * 0.35, cy + hh * 0.96]]);
+    return { body, head };
   }
   function figureFront(k, cls) {
-    let g = `<g class="${cls}">`;
-    const hip = k.torso[k.torso.length - 1];
-    for (const s of [1, -1]) {
-      g += `<path d="${limbPath(k.leg, s, false)}"/>`;
-      const a = k.leg[k.leg.length - 1], fw = k.foot.width / 2, fx = s * a.x;
-      g += `<path d="M${f(fx - a.halfWidth)},${f(Y(a.y))} L${f(fx + a.halfWidth)},${f(Y(a.y))} L${f(fx + fw)},${f(Y(18))} Q${f(fx + fw)},${f(Y(0))} ${f(fx + fw - 18)},${f(Y(0))} L${f(fx - fw + 18)},${f(Y(0))} Q${f(fx - fw)},${f(Y(0))} ${f(fx - fw)},${f(Y(18))} Z"/>`;
-    }
-    g += `<path d="${torsoPath(k.torso, 'halfWidth', k.crotchY, hip.halfWidth)}"/>`;
-    g += `<ellipse cx="0" cy="${f(Y(k.head.centerY))}" rx="${f(k.head.halfWidth)}" ry="${f(k.head.halfHeight)}"/>`;
-    for (const s of [1, -1]) g += `<path class="arm" d="${limbPath(k.arm, s, true)}"/>`;
-    return g + '</g>';
+    const g = frontGeom(k);
+    return `<g class="${cls}"><path class="b" d="${g.body}"/><path class="b" d="${g.head}"/><path class="a" d="${g.arms[0]}"/><path class="a" d="${g.arms[1]}"/></g>`;
   }
   function figureSide(k, cls) {
-    let g = `<g class="${cls}">`;
-    const legPts = k.leg.map(p => ({ ...p, x: 0 }));
-    g += `<path d="${limbPath(legPts, 1, false)}"/>`;
-    const a = k.leg[k.leg.length - 1];
-    g += `<path d="M${f(-a.halfWidth)},${f(Y(a.y))} L${f(a.halfWidth)},${f(Y(a.y))} L${f(k.foot.length - 60)},${f(Y(30))} Q${f(k.foot.length - 45)},${f(Y(0))} ${f(k.foot.length - 75)},${f(Y(0))} L${f(-55)},${f(Y(0))} Q${f(-70)},${f(Y(0))} ${f(-62)},${f(Y(35))} Z"/>`;
-    const hip = k.torso[k.torso.length - 1];
-    g += `<path d="${torsoPath(k.torso, 'halfDepth', k.crotchY, hip.halfDepth * 0.9)}"/>`;
-    g += `<ellipse cx="0" cy="${f(Y(k.head.centerY))}" rx="${f(k.head.halfDepth)}" ry="${f(k.head.halfHeight)}"/>`;
-    return g + '</g>';
+    const g = sideGeom(k);
+    return `<g class="${cls}"><path class="b" d="${g.body}"/><path class="b" d="${g.head}"/></g>`;
   }
   function grid(x0, x1) {
     let g = '<g class="grid">';
@@ -329,14 +404,18 @@ th.n { text-align: right; }
     }
     return g + '</g>';
   }
+  const DEFS = `<defs>
+    <linearGradient id="gB" x1="0" x2="1" y1="0" y2="0"><stop offset="0" style="stop-color:var(--body-dark)"/><stop offset="0.32" style="stop-color:var(--body-light)"/><stop offset="0.62" style="stop-color:var(--body)"/><stop offset="1" style="stop-color:var(--body-dark)"/></linearGradient>
+    <linearGradient id="gA" x1="0" x2="1" y1="0" y2="0"><stop offset="0" style="stop-color:var(--body-dark)"/><stop offset="0.4" style="stop-color:var(--body-light)"/><stop offset="1" style="stop-color:var(--body-dark)"/></linearGradient></defs>`;
   const STYLE = `<style>
-    .me path, .me ellipse { fill: var(--body); } .me path.arm { fill: var(--body-arm); }
-    .ghost path, .ghost ellipse { fill: var(--ghost); opacity: .38; }
+    .me .b { fill: url(#gB); stroke: var(--body-dark); stroke-width: 2; stroke-linejoin: round; }
+    .me .a { fill: url(#gA); stroke: var(--body-dark); stroke-width: 2; stroke-linejoin: round; }
+    .ghost .b, .ghost .a { fill: var(--ghost); opacity: .35; }
     .gl { stroke: var(--grid); stroke-width: 1.5; } .gl.major { stroke: var(--line); stroke-width: 2.5; }
     .ruler { stroke: var(--muted); stroke-width: 2; } .rl { fill: var(--muted); font: 30px var(--f-num); }
     .dl { stroke: var(--accent); stroke-width: 3; } .lead { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 5; }
     .dt { fill: var(--muted); font: 26px var(--f-ui); } .dv { fill: var(--accent); font: 500 30px var(--f-num); }
-  </style>`;
+  </style>` + DEFS;
 
   /* ── 상태와 UI ── */
   const state = { sex: 'F', h: COEF.F.height_cm.mean, w: COEF.F.weight_kg.mean, bust: 'medium',
