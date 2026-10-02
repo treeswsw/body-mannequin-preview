@@ -167,6 +167,8 @@ label.btn { display: inline-block; }
         <button type="button" class="btn" id="toMean">20대 평균으로</button>
       </div>
       <label class="check"><input type="checkbox" id="ghostOn" checked> 20대 평균 체형 겹쳐 보기</label>
+      <label class="check"><input type="checkbox" id="jointOn"> 관절 인식으로 잰 위치 보기</label>
+      <p class="note" id="jointNote" hidden></p>
     </section>
 
     <section class="stage" aria-label="마네킹">
@@ -681,6 +683,7 @@ label.btn { display: inline-block; }
     $('fig').innerHTML = STYLE + grid(-410, 440) + (state.ghost ? FF(g, 'ghost') : '') + FF(k, 'me') + dims(k);
     $('side').setAttribute('viewBox', '-260 0 520 1980');
     $('side').innerHTML = STYLE + grid(-250, 260) + (state.ghost ? FS(g, 'ghost') : '') + FS(k, 'me');
+    if (window.__jointHook) window.__jointHook();
 
     const bmi = k.w / Math.pow(k.h / 100, 2);
     $('summary').innerHTML = `<span>${state.sex === 'F' ? '여성' : '남성'}</span><span>키 <b>${r1(k.h)}</b> cm</span><span>체중 <b>${r1(k.w)}</b> kg</span><span>BMI <b>${bmi.toFixed(1)}</b></span>`;
@@ -799,8 +802,8 @@ function measure(L, M, mw, mh, sex, h, w, shoe, hair, COEF) {
    슬라이더 = (사진에서 잰 값 − 마네킹에서 같은 방식으로 잰 값) ÷ 슬라이더 1칸당 변화량(mm)
    → 정의·자세·검출 편향이 양쪽에서 같이 상쇄된다. 1칸당 변화량은 BodyM 397명 테스트에서 구한 중앙값. */
 const SLOPE = { F: { shoulder: 6.2, waist: 11.2, hip: 12.1, legLength: 6.7 }, M: { shoulder: 8.0, waist: 11.8, hip: 10.4, legLength: 7.9 } };
-function mannequinFeatures(sex, h, w, bust, COEF) {
-  const B = window.__BODY, pts = B.mannequinFront(sex, h, w, bust, { shoulder: 0, waist: 0, hip: 0, legLength: 0, armLength: 0 });
+function mannequinMeasure(sex, h, w, bust, COEF, sliders) {     // 마네킹 윤곽을 단색 실루엣으로 그려 사진과 같은 방식(관절 검출 + 같은 측정)으로 잰다
+  const B = window.__BODY, pts = B.mannequinFront(sex, h, w, bust, sliders || { shoulder: 0, waist: 0, hip: 0, legLength: 0, armLength: 0 });
   const cv = document.createElement('canvas'); cv.width = 720; cv.height = 960;
   const g = cv.getContext('2d'), sc = h * 10 / 880;
   g.fillStyle = '#fff'; g.fillRect(0, 0, 720, 960); g.fillStyle = '#000'; g.beginPath();
@@ -810,8 +813,50 @@ function mannequinFeatures(sex, h, w, bust, COEF) {
   const id = g.getImageData(0, 0, 720, 960).data, M = new Uint8Array(720 * 960);
   for (let i = 0; i < M.length; i++) M[i] = id[i * 4] < 128 ? 1 : 0;
   const L = pr.landmarks[0].map(q => ({ x: q.x * 720, y: q.y * 960, v: q.visibility }));
-  return measure(L, M, 720, 960, sex, h, w, 0, 0, COEF).f;
+  return { L, R: measure(L, M, 720, 960, sex, h, w, 0, 0, COEF), sc };
 }
+function mannequinFeatures(sex, h, w, bust, COEF) { const r = mannequinMeasure(sex, h, w, bust, COEF); return r && r.R.f; }
+
+/* 마네킹 위에 관절 인식 결과 겹쳐 보기 (파란 선: 인식된 관절, 빨간 선: 잰 위치) */
+let jointTok = 0, jointTimer = null;
+const JPAIRS = [[11, 13], [13, 15], [12, 14], [14, 16], [11, 12], [23, 24], [11, 23], [12, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
+function jointSvg(r) {
+  const { L, R, sc } = r, X = px => (px - 360) * sc, Yy = py => 1960 - (930 - py) * sc, f = R.f, fx = v => v.toFixed(1);
+  let o = '<g id="jointG" pointer-events="none" font-family="inherit">';
+  for (const [a, b] of JPAIRS) o += `<line x1="${fx(X(L[a].x))}" y1="${fx(Yy(L[a].y))}" x2="${fx(X(L[b].x))}" y2="${fx(Yy(L[b].y))}" stroke="#2f6fb0" stroke-width="5" stroke-linecap="round" opacity=".9"/>`;
+  for (const i of [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]) o += `<circle cx="${fx(X(L[i].x))}" cy="${fx(Yy(L[i].y))}" r="8" fill="#fff" stroke="#2f6fb0" stroke-width="4"/>`;
+  const lab = (x, y, t) => `<text x="${fx(x)}" y="${fx(y)}" text-anchor="end" font-size="26" font-weight="700" fill="#2f6fb0" stroke="#fff" stroke-width="5" paint-order="stroke">${t}</text>`;
+  const red = (x1, x2, y) => `<line x1="${fx(x1)}" y1="${fx(y)}" x2="${fx(x2)}" y2="${fx(y)}" stroke="#d4372c" stroke-width="7" stroke-linecap="round"/>`;
+  const sx1 = X(L[12].x), sx2 = X(L[11].x), sy = (Yy(L[11].y) + Yy(L[12].y)) / 2;       // 어깨 관절 사이 거리
+  o += `<line x1="${fx(sx1)}" y1="${fx(Yy(L[12].y))}" x2="${fx(sx2)}" y2="${fx(Yy(L[11].y))}" stroke="#d4372c" stroke-width="7" stroke-linecap="round"/>` + lab(Math.min(sx1, sx2) - 24, sy - 8, `어깨 관절 ${Math.round(f.shL)}`);
+  for (const [key, name, v] of [['waist', '허리', f.wa], ['hip', '엉덩이', f.hp]]) {
+    const sg = R.segs[key]; if (!sg || v == null) continue;
+    const x1 = X(sg[0]), x2 = X(sg[1] + 1), y = Yy(sg[2]);
+    o += red(x1, x2, y) + lab(x1 - 20, y + 9, `${name} ${Math.round(v)}`);
+  }
+  return o + '</g>';
+}
+async function showJoints() {
+  const tok = ++jointTok, note = $('jointNote'), B = window.__BODY, st = B.state;
+  if (!$('jointOn').checked) return;
+  note.hidden = false;
+  try { await loadModels(); } catch (e) { note.textContent = '이 화면에서는 분석 모델을 불러올 수 없어요. https://treeswsw.github.io/body-mannequin-preview/ 에서 열어 주세요.'; return; }
+  if (tok !== jointTok) return;
+  try {
+    const c = B.COEF[st.sex], h = Math.max(c.height_cm.min, Math.min(c.height_cm.max, st.h)), w = Math.max(c.weight_kg.min, Math.min(c.weight_kg.max, st.w));
+    const r = mannequinMeasure(st.sex, st.h, st.w, st.bust, B.COEF, { ...st.sliders });
+    if (tok !== jointTok) return;
+    const fig = $('fig'), old = fig.querySelector('#jointG'); if (old) old.remove();
+    if (!r) { note.textContent = '이 체형에서는 관절을 찾지 못했어요.'; return; }
+    fig.insertAdjacentHTML('beforeend', jointSvg(r));
+    note.textContent = '파란 선·점: 구글 MediaPipe가 마네킹에서 찾은 관절, 빨간 선: 사진 분석과 같은 방식으로 잰 위치예요.';
+  } catch (e) { note.textContent = '관절 측정에 실패했어요: ' + (e.message || e); }
+}
+window.__jointHook = () => { if (!$('jointOn').checked) return; ++jointTok; clearTimeout(jointTimer); jointTimer = setTimeout(showJoints, 220); };
+$('jointOn').addEventListener('change', () => {
+  if ($('jointOn').checked) { $('jointNote').hidden = false; $('jointNote').textContent = pose ? '관절을 찾는 중…' : '분석 모델을 불러오는 중이에요… (처음 한 번, 약 26MB)'; showJoints(); }
+  else { ++jointTok; clearTimeout(jointTimer); $('jointNote').hidden = true; const g = $('fig').querySelector('#jointG'); if (g) g.remove(); }
+});
 function buildRowsOld(R, Fm, sex, COEF, h, w) {            // 기존 방식: 사진 값을 한국 평균 예측값과 비교
   const it = COEF[sex].items, P = n => it[n].a + it[n].b_height * h + it[n].c_weight * w, SD = n => it[n].rmse, f = R.f;
   return [
