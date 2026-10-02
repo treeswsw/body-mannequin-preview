@@ -200,7 +200,7 @@ label.btn { display: inline-block; }
     <div class="photo-grid">
       <canvas id="photoCanvas" width="360" height="540" aria-label="분석 결과 미리보기"></canvas>
       <div class="photo-res">
-        <table><thead><tr><th>적용</th><th>항목</th><th class="n">사진</th><th class="n">예측</th><th class="n">슬라이더</th></tr></thead><tbody id="photoTbl"><tr><td colspan="5" class="note">아직 분석한 사진이 없어요.</td></tr></tbody></table>
+        <table><thead><tr><th>적용</th><th>항목</th><th class="n">사진</th><th class="n">마네킹</th><th class="n">슬라이더</th></tr></thead><tbody id="photoTbl"><tr><td colspan="5" class="note">아직 분석한 사진이 없어요.</td></tr></tbody></table>
         <div class="row-btns"><button type="button" class="btn" id="photoApply" disabled>선택한 항목을 슬라이더에 적용</button></div>
         <p class="note" id="photoNote"></p>
       </div>
@@ -552,7 +552,8 @@ label.btn { display: inline-block; }
       const W = warpFns(k);
       return `<g class="${cls}"><path class="b" d="${polyPath(taubin(TF.side.map(p => warpSide(W, p[0], p[1]))))}"/></g>`;
     }
-    return { front: tmplFront, side: tmplSide };
+    function frontPts(k) { const W = warpFns(k); return taubin(TF.front.map(p => warpFront(W, p[0], p[1]))); }
+    return { front: tmplFront, side: tmplSide, frontPts };
   }
   const TPL = { F: makeTmpl(JSON.parse(document.getElementById('tmplF').textContent), 'F'),
                M: makeTmpl(JSON.parse(document.getElementById('tmplM').textContent), 'M') };
@@ -689,7 +690,8 @@ label.btn { display: inline-block; }
   $('resetSl').onclick = () => { for (const [k] of SL) state.sliders[k] = 0; state.bust = 'medium'; update(); };
   $('toMean').onclick = () => { state.h = COEF[state.sex].height_cm.mean; state.w = COEF[state.sex].weight_kg.mean; update(); };
   $('ghostOn').onchange = e => { state.ghost = e.target.checked; render(); };
-  window.__BODY = { state, COEF, update };
+  window.__BODY = { state, COEF, update,
+    mannequinFront: (sex, h, w, bust, sliders) => TPL[sex].frontPts(bodyKeypoints({ sex, heightCm: h, weightKg: w, bust, sliders })) };
   update();
 })();
 </script>
@@ -751,14 +753,38 @@ function measure(L, M, mw, mh, sex, h, w, shoe, hair, COEF) {
   const knee = ((bot - L[25].y) + (bot - L[26].y)) / 2 * s - shoe;
   const arm = (Math.hypot(L[11].x - L[15].x, L[11].y - L[15].y) + Math.hypot(L[12].x - L[16].x, L[12].y - L[16].y)) / 2 * s;
   const wa = torso(P('허리높이')), hp = torso(P('엉덩이높이'));
+  const shL = Math.hypot(L[11].x - L[12].x, L[11].y - L[12].y) * s;      // 어깨 관절 사이 거리 (팔 자세 영향이 적음)
   return { s, top, bot, cx, segs: { shoulder: bseg, waist: wa && wa.seg, hip: hp && hp.seg },
-    rows: [
-      { key: 'legLength', label: '다리 길이 (무릎 높이)', m: knee, p: P('무릎높이'), sd: SD('샅높이') * P('무릎높이') / P('샅높이'), def: true, note: '관절 위치 기준' },
-      { key: 'hip', label: '엉덩이 폭', m: hp && hp.v, p: P('엉덩이너비'), sd: SD('엉덩이너비'), def: true, note: '옷 두께만큼 크게 나올 수 있어요' },
-      { key: 'waist', label: '허리 폭', m: wa && wa.v, p: P('허리너비'), sd: SD('허리너비'), def: 'tight', note: '헐렁한 옷이면 크게 나와요' },
-      { key: 'shoulder', label: '어깨 폭 (위팔 바깥)', m: bid * s, p: P('위팔사이너비'), sd: SD('어깨사이너비'), def: 'tight', note: '소매가 부풀면 크게 나와요' },
-      { key: 'armLength', label: '팔 길이', m: arm, p: P('팔길이'), sd: SD('팔길이'), def: false, note: '어깨 관절점 기준이라 짧게 나와요 (보정 전)' },
-    ] };
+    f: { shL, bid: bid * s, wa: wa && wa.v, hp: hp && hp.v, knee, arm } };
+}
+
+/* 마네킹 윤곽을 사진과 같은 방식(관절 검출 + 같은 측정)으로 재서 비교 기준으로 쓴다.
+   슬라이더 = (사진에서 잰 값 − 마네킹에서 같은 방식으로 잰 값) ÷ 슬라이더 1칸당 변화량(mm)
+   → 정의·자세·검출 편향이 양쪽에서 같이 상쇄된다. 1칸당 변화량은 BodyM 397명 테스트에서 구한 중앙값. */
+const SLOPE = { F: { shoulder: 6.2, waist: 11.2, hip: 12.1, legLength: 6.7 }, M: { shoulder: 8.0, waist: 11.8, hip: 10.4, legLength: 7.9 } };
+function mannequinFeatures(sex, h, w, bust, COEF) {
+  const B = window.__BODY, pts = B.mannequinFront(sex, h, w, bust, { shoulder: 0, waist: 0, hip: 0, legLength: 0, armLength: 0 });
+  const cv = document.createElement('canvas'); cv.width = 720; cv.height = 960;
+  const g = cv.getContext('2d'), sc = h * 10 / 880;
+  g.fillStyle = '#fff'; g.fillRect(0, 0, 720, 960); g.fillStyle = '#000'; g.beginPath();
+  pts.forEach((p, i) => { const x = 360 + p[0] / sc, y = 930 - p[1] / sc; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.closePath(); g.fill();
+  const pr = pose.detect(cv); if (!pr.landmarks || !pr.landmarks.length) return null;
+  const id = g.getImageData(0, 0, 720, 960).data, M = new Uint8Array(720 * 960);
+  for (let i = 0; i < M.length; i++) M[i] = id[i * 4] < 128 ? 1 : 0;
+  const L = pr.landmarks[0].map(q => ({ x: q.x * 720, y: q.y * 960, v: q.visibility }));
+  return measure(L, M, 720, 960, sex, h, w, 0, 0, COEF).f;
+}
+function buildRows(R, Fm, sex, COEF, h, w) {
+  const it = COEF[sex].items, P = n => it[n].a + it[n].b_height * h + it[n].c_weight * w, SD = n => it[n].rmse, f = R.f, sl = SLOPE[sex];
+  const closed = (key, k, label, def, note) => { const ok = f[k] != null && Fm && Fm[k] != null; return { key, label, m: ok ? f[k] : null, p: ok ? Fm[k] : null, sd: sl[key], def: ok ? def : false, note }; };
+  return [
+    closed('shoulder', 'shL', '어깨 폭 (어깨 관절 간격)', true, '팔을 벌려도 영향이 적어요'),
+    closed('waist', 'wa', '허리 폭', 'tight', '헐렁한 옷이면 크게 나와요'),
+    closed('hip', 'hp', '엉덩이 폭', false, '테스트에서 정확도가 낮아 기본 해제'),
+    closed('legLength', 'knee', '다리 길이 (무릎 높이)', false, '테스트에서 정확도가 낮아 기본 해제'),
+    { key: 'armLength', label: '팔 길이', m: f.arm, p: P('팔길이'), sd: SD('팔길이'), def: false, note: '사이즈코리아와 정의가 달라 보정 전' }
+  ];
 }
 
 function draw(img, L, M, mw, mh, R) {
@@ -807,11 +833,13 @@ async function analyze(file) {
     const st = B.state, c = B.COEF[st.sex];
     const h = Math.max(c.height_cm.min, Math.min(c.height_cm.max, st.h)), w = Math.max(c.weight_kg.min, Math.min(c.weight_kg.max, st.w));
     const R = measure(L, M, mw, mh, st.sex, h, w, $('optShoe').checked ? 25 : 0, 10, B.COEF);
+    let Fm = null; try { Fm = mannequinFeatures(st.sex, h, w, st.bust, B.COEF); } catch (e) { Fm = null; }
+    R.rows = buildRows(R, Fm, st.sex, B.COEF, h, w);
     last = R; draw(img, L, M, mw, mh, R); showRows(R);
     $('refImg').src = img.src; $('refBox').hidden = false;
     $('refNote').textContent = `${file.name} · ${st.sex === 'F' ? '여성' : '남성'} ${h}cm / ${w}kg 기준으로 분석`;
     status(`분석 완료 — ${st.sex === 'F' ? '여성' : '남성'} 키 ${h}cm · 체중 ${w}kg 기준. 사진 1px ≈ ${R.s.toFixed(2)}mm.` + (low.length ? ' 일부 관절이 잘 안 보여서 정확도가 낮을 수 있어요.' : ''));
-    $('photoNote').textContent = '슬라이더 값 = (사진에서 잰 값 − 키·체중으로 예측한 값) ÷ 같은 키·체중 사람들의 편차. 체크된 항목만 적용돼요. 빨간 선이 잰 위치예요.';
+    $('photoNote').textContent = '슬라이더 값 = (사진에서 잰 값 − 마네킹을 같은 방식으로 잰 값) ÷ 슬라이더 1칸당 변화량. 체크된 항목만 적용돼요. 빨간 선이 잰 위치예요. 실루엣 테스트(BodyM)에서 어깨는 정확해졌고 허리·엉덩이·다리는 정확도가 낮아 기본 해제했어요.';
   } catch (e) { status(e.message || '분석에 실패했어요.'); }
 }
 
